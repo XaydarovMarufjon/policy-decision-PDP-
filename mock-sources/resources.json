@@ -1,0 +1,19 @@
+{
+  "resources": {
+    "incident_db": {
+      "type": "database",
+      "name": "incident_db",
+      "criticality": "high"
+    },
+    "case_management": {
+      "type": "application",
+      "name": "case_management",
+      "criticality": "medium"
+    },
+    "audit_log": {
+      "type": "log-store",
+      "name": "audit_log",
+      "criticality": "high"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "input": {
+    "subject": {
+      "user": "vali.karimov",
+      "role": "guest",
+      "department": "HR",
+      "mfa": true
+    },
+    "device": {
+      "managed": true,
+      "edr_status": "healthy",
+      "patch_level": "ok",
+      "ip": "10.10.80.60"
+    },
+    "risk": {
+      "siem_score": 10,
+      "threat_intel_match": false,
+      "impossible_travel": false
+    },
+    "resource": {
+      "type": "database",
+      "name": "incident_db",
+      "criticality": "high"
+    },
+    "action": "read"
+  }
+}

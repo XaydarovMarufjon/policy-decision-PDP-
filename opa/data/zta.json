@@ -1,0 +1,84 @@
+{
+  "enterprise": {
+    "zta": {
+      "risk": {
+        "default_score": 100,
+        "medium_score": 50,
+        "deny_score": 80
+      },
+      "policy_names": {
+        "policy-enterprise-allow": "Enterprise Zero Trust allow policy",
+        "policy-deny-high-risk": "Deny access when risk score is high",
+        "policy-deny-threat-intel-match": "Deny access when threat intelligence match exists",
+        "policy-deny-impossible-travel": "Deny access on impossible travel",
+        "policy-deny-access-requirements": "Deny access when enterprise requirements are not satisfied"
+      },
+      "roles": {
+        "analyst": {
+          "departments": ["SOC"],
+          "resources": {
+            "incident_db": ["read"],
+            "case_management": ["read", "write"]
+          }
+        },
+        "SOC_ANALYST": {
+          "departments": ["SOC"],
+          "resources": {
+            "incident_db": ["read"],
+            "case_management": ["read", "write"]
+          }
+        },
+        "SOC_ADMIN": {
+          "departments": ["SOC"],
+          "resources": {
+            "incident_db": ["read", "write", "delete"],
+            "case_management": ["read", "write", "delete"],
+            "audit_log": ["read"]
+          }
+        },
+        "AUDITOR": {
+          "departments": ["GRC", "Security"],
+          "resources": {
+            "audit_log": ["read"],
+            "incident_db": ["read"]
+          }
+        }
+      },
+      "resources": {
+        "incident_db": {
+          "type": "database",
+          "criticality": "high",
+          "required_mfa": true,
+          "max_risk_score": 49,
+          "device": {
+            "managed": true,
+            "edr_status": "healthy",
+            "patch_level": "ok"
+          }
+        },
+        "case_management": {
+          "type": "application",
+          "criticality": "medium",
+          "required_mfa": true,
+          "max_risk_score": 59,
+          "device": {
+            "managed": true,
+            "edr_status": "healthy",
+            "patch_level": "ok"
+          }
+        },
+        "audit_log": {
+          "type": "log-store",
+          "criticality": "high",
+          "required_mfa": true,
+          "max_risk_score": 39,
+          "device": {
+            "managed": true,
+            "edr_status": "healthy",
+            "patch_level": "ok"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "request_id": "req-deny-role-001",
+  "request_metadata": {
+    "client": "admin-ui",
+    "correlation_id": "corr-deny-role-001",
+    "received_at": "2026-07-06T10:02:00.000Z"
+  },
+  "subject_ref": {
+    "type": "mock_token",
+    "token": "mock-token-guest",
+    "session_id": "sess-guest-001",
+    "user_agent": "Mozilla/5.0 Chrome"
+  },
+  "device_evidence": {
+    "device_id": "device-456",
+    "hostname": "shared-laptop-456",
+    "agent_id": "wazuh-agent-456",
+    "os": "Ubuntu",
+    "os_version": "24.04",
+    "browser": "Chrome 126",
+    "certificate_fingerprint": "sha256:guest-device-cert-fingerprint"
+  },
+  "network": {
+    "source_ip": "10.10.80.55",
+    "source_port": 54823,
+    "protocol": "https",
+    "geo_country": "UZ",
+    "network_zone": "corp-vpn"
+  },
+  "resource_ref": {
+    "resource_id": "incident_db",
+    "path": "/api/incidents/123",
+    "environment": "production",
+    "tenant_id": "soc",
+    "sensitivity_hint": "high"
+  },
+  "risk_evidence": {
+    "source": "manual-test",
+    "siem_score": 20,
+    "threat_intel_match": false,
+    "impossible_travel": false,
+    "alert_ids": []
+  },
+  "action": "read"
+}

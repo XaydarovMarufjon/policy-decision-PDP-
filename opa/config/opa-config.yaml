@@ -1,0 +1,16 @@
+labels:
+  app: policy-engine
+  component: opa-pe
+  environment: production
+
+default_decision: /sentryx/zta/decision
+persistence_directory: /var/opa
+
+decision_logs:
+  console: true
+
+caching:
+  inter_query_builtin_cache:
+    max_size_bytes: 10000000
+    forced_eviction_threshold_percentage: 70
+    stale_entry_eviction_period_seconds: 3600

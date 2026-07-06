@@ -1,0 +1,56 @@
+services:
+  pdp:
+    build:
+      context: .
+    container_name: zta-pdp
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PDP_PORT: "3000"
+      OPA_DECISION_URL: "http://opa:8181/v1/data/sentryx/zta/decision"
+      CONTEXT_SOURCE_DIR: "/app/mock-sources"
+      PDP_AUDIT_LOG_PATH: "/app/audit-logs/pdp-decisions.jsonl"
+    depends_on:
+      - opa
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - pdp-audit-logs:/app/audit-logs
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  opa:
+    image: openpolicyagent/opa:1.18.2
+    container_name: zta-pe-opa
+    restart: unless-stopped
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./opa/policies:/policies:ro
+      - ./opa/data:/data:ro
+      - ./opa/config:/config:ro
+      - opa-runtime:/var/opa
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command:
+      - "run"
+      - "--server"
+      - "--addr=0.0.0.0:8181"
+      - "--log-level=info"
+      - "--log-format=json"
+      - "--config-file=/config/opa-config.yaml"
+      - "/policies"
+      - "/data"
+
+volumes:
+  opa-runtime:
+  pdp-audit-logs:

@@ -1,0 +1,16 @@
+{
+  "devices": {
+    "device-456": {
+      "managed": true,
+      "edr_status": "healthy",
+      "patch_level": "ok",
+      "ip": "10.10.80.55"
+    },
+    "device-unmanaged": {
+      "managed": false,
+      "edr_status": "missing",
+      "patch_level": "unknown",
+      "ip": "10.10.80.70"
+    }
+  }
+}

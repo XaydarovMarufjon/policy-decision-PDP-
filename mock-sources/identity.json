@@ -1,0 +1,27 @@
+{
+  "tokens": {
+    "mock-token-ali": "user-123",
+    "mock-token-guest": "user-guest",
+    "mock-token-auditor": "user-auditor"
+  },
+  "users": {
+    "user-123": {
+      "user": "ali.valiyev",
+      "role": "analyst",
+      "department": "SOC",
+      "mfa": true
+    },
+    "user-guest": {
+      "user": "vali.karimov",
+      "role": "guest",
+      "department": "HR",
+      "mfa": true
+    },
+    "user-auditor": {
+      "user": "malika.saidova",
+      "role": "AUDITOR",
+      "department": "GRC",
+      "mfa": true
+    }
+  }
+}

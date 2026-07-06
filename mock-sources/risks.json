@@ -1,0 +1,29 @@
+{
+  "default": {
+    "siem_score": 20,
+    "threat_intel_match": false,
+    "impossible_travel": false
+  },
+  "by_source_ip": {
+    "10.10.80.55": {
+      "siem_score": 20,
+      "threat_intel_match": false,
+      "impossible_travel": false
+    },
+    "10.10.80.66": {
+      "siem_score": 20,
+      "threat_intel_match": true,
+      "impossible_travel": false
+    },
+    "10.10.80.77": {
+      "siem_score": 20,
+      "threat_intel_match": false,
+      "impossible_travel": true
+    },
+    "10.10.80.90": {
+      "siem_score": 90,
+      "threat_intel_match": false,
+      "impossible_travel": false
+    }
+  }
+}
