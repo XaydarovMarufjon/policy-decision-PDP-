@@ -98,22 +98,55 @@ curl -s -X POST http://localhost:3000/pdp/evaluate \
 Tampered signatures, `alg:none` forgeries, wrong issuer, and expired tokens are
 rejected with HTTP 400.
 
-### Switch to a real IdP (Keycloak / Entra / Okta) later
+### Test with a real Keycloak IdP
+
+A bundled Keycloak container issues real user tokens. It imports the `soc`
+realm (`keycloak/realm-soc.json`) with roles and seeded users on first start:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.keycloak.yml up -d
+```
+
+| User | Password | Role | Department | MFA |
+| --- | --- | --- | --- | --- |
+| `ali.valiyev` | `Passw0rd!` | analyst | SOC | true |
+| `malika.saidova` | `Passw0rd!` | auditor | GRC | true |
+| `vali.karimov` | `Passw0rd!` | guest | HR | false |
+
+Admin console: `http://localhost:8080` (`admin` / `admin`).
+
+Get a real access token (Resource Owner Password grant on the `pdp-test`
+public client) and evaluate it through the PDP:
+
+```bash
+TOKEN=$(./scripts/kc-token.sh ali.valiyev)
+curl -s -X POST http://localhost:3000/pdp/evaluate \
+  -H "Content-Type: application/json" \
+  -d "$(jq --arg t "$TOKEN" '.subject_ref.token=$t' requests/pdp/allow-real-user.json)"
+```
+
+The PDP verifies the token against Keycloak's JWKS (`http://keycloak:8080/...`)
+and maps `preferred_username`, `realm_access.roles`, `department`, and the `mfa`
+claim into the canonical subject. The issuer is pinned to
+`http://localhost:8080/realms/soc` (via `KC_HOSTNAME`) so tokens verify the same
+whether fetched from the host or from inside the compose network.
+
+### Point at your own IdP (Entra / Okta / existing Keycloak)
 
 No code change — set env and point at the IdP's JWKS (see `.env.example`):
 
 ```bash
 IDENTITY_MODE=oidc
-OIDC_ISSUER=https://keycloak.example.com/realms/soc
-OIDC_JWKS_URL=https://keycloak.example.com/realms/soc/protocol/openid-connect/certs
+OIDC_ISSUER=https://idp.example.com/realms/soc
+OIDC_JWKS_URL=https://idp.example.com/realms/soc/protocol/openid-connect/certs
 OIDC_ROLE_PRIORITY=admin,analyst,auditor,guest
 ```
 
-Then send real user access tokens as `subject_ref.token`. Claim mapping defaults
-are Keycloak-style (`preferred_username`, `realm_access.roles`, `department`,
-`amr`) and are each overridable via `OIDC_CLAIM_*` env vars.
+Claim mapping defaults are Keycloak-style (`preferred_username`,
+`realm_access.roles`, `department`, `amr`) and are each overridable via
+`OIDC_CLAIM_*` env vars.
 
-Back to mock mode: `docker compose up -d` (without the oidc override).
+Back to mock mode: `docker compose up -d` (without an override).
 
 ## Version checks
 

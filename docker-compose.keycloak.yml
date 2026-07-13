@@ -1,0 +1,44 @@
+# Real Keycloak IdP override for the PDP (real-user identity).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.keycloak.yml up -d
+#
+# Keycloak imports the "soc" realm (roles + test users) on first start.
+# Get a real user access token and send it as subject_ref.token (type "jwt"):
+#
+#   ./scripts/kc-token.sh ali.valiyev        # analyst / SOC / mfa=true
+#
+# Admin console: http://localhost:8080  (admin / admin)
+#
+# Issuer is pinned to http://localhost:8080/realms/soc via KC_HOSTNAME so tokens
+# verify the same whether fetched from the host or from inside the network. The
+# PDP fetches JWKS over the internal network at http://keycloak:8080.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.4
+    container_name: zta-keycloak
+    command:
+      - "start-dev"
+      - "--import-realm"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "admin"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://localhost:8080"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-soc.json:/opt/keycloak/data/import/realm-soc.json:ro
+    restart: unless-stopped
+
+  pdp:
+    environment:
+      IDENTITY_MODE: "oidc"
+      OIDC_ISSUER: "http://localhost:8080/realms/soc"
+      OIDC_JWKS_URL: "http://keycloak:8080/realms/soc/protocol/openid-connect/certs"
+      OIDC_ROLE_PRIORITY: "admin,analyst,auditor,guest"
+      OIDC_CLAIM_MFA: "mfa"
+    depends_on:
+      - opa
+      - keycloak

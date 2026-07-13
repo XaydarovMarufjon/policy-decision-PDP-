@@ -1,0 +1,94 @@
+{
+  "realm": "soc",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "admin", "description": "SOC administrator" },
+      { "name": "analyst", "description": "SOC analyst" },
+      { "name": "auditor", "description": "GRC auditor" },
+      { "name": "guest", "description": "Low-trust guest" }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "pdp-test",
+      "name": "PDP test client (direct access grant)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "department",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "department",
+            "claim.name": "department",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "mfa",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "mfa",
+            "claim.name": "mfa",
+            "jsonType.label": "boolean",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "ali.valiyev",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Ali",
+      "lastName": "Valiyev",
+      "email": "ali.valiyev@soc.local",
+      "attributes": { "department": ["SOC"], "mfa": ["true"] },
+      "credentials": [
+        { "type": "password", "value": "Passw0rd!", "temporary": false }
+      ],
+      "realmRoles": ["analyst"]
+    },
+    {
+      "username": "malika.saidova",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Malika",
+      "lastName": "Saidova",
+      "email": "malika.saidova@grc.local",
+      "attributes": { "department": ["GRC"], "mfa": ["true"] },
+      "credentials": [
+        { "type": "password", "value": "Passw0rd!", "temporary": false }
+      ],
+      "realmRoles": ["auditor"]
+    },
+    {
+      "username": "vali.karimov",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Vali",
+      "lastName": "Karimov",
+      "email": "vali.karimov@hr.local",
+      "attributes": { "department": ["HR"], "mfa": ["false"] },
+      "credentials": [
+        { "type": "password", "value": "Passw0rd!", "temporary": false }
+      ],
+      "realmRoles": ["guest"]
+    }
+  ]
+}
