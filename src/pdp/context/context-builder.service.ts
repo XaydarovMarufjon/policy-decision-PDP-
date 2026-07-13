@@ -1,20 +1,30 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import {
   AccessEvaluationInput,
   ContextBuildResult,
   ContextTraceEntry,
   EvidenceEvaluationRequest,
   RiskContext,
+  SubjectContext,
 } from '../pdp.types';
 import { MockSourceRepository } from './mock-source.repository';
+import {
+  IDENTITY_PROVIDER,
+  IdentityProvider,
+  IdentityResolution,
+} from './identity/identity-provider';
 
 type JsonRecord = Record<string, unknown>;
 
 @Injectable()
 export class ContextBuilderService {
-  constructor(private readonly sources: MockSourceRepository) {}
+  constructor(
+    private readonly sources: MockSourceRepository,
+    @Inject(IDENTITY_PROVIDER)
+    private readonly identity: IdentityProvider,
+  ) {}
 
-  build(request: unknown): ContextBuildResult {
+  async build(request: unknown): Promise<ContextBuildResult> {
     const body = this.asRecord(request, 'request body');
 
     if (this.isCanonicalRequest(body)) {
@@ -55,7 +65,9 @@ export class ContextBuilderService {
     };
   }
 
-  private buildFromEvidence(body: JsonRecord): ContextBuildResult {
+  private async buildFromEvidence(
+    body: JsonRecord,
+  ): Promise<ContextBuildResult> {
     const request = body as unknown as EvidenceEvaluationRequest;
     const sourceIp = request.network?.source_ip;
     const trace: ContextTraceEntry[] = [];
@@ -98,13 +110,7 @@ export class ContextBuilderService {
       );
     }
 
-    const subjectLookup = this.traceLookup(
-      'identity',
-      'mock-sources/identity.json',
-      'resolve_subject',
-      this.subjectLookupKey(request.subject_ref),
-      () => this.sources.resolveSubject(request.subject_ref),
-    );
+    const subjectLookup = await this.resolveIdentity(request.subject_ref);
     trace.push(subjectLookup.trace);
 
     const deviceId = request.device_evidence?.device_id;
@@ -141,7 +147,9 @@ export class ContextBuilderService {
     const sourceRisk = riskLookup.result;
 
     if (!subject) {
-      throw new BadRequestException('Unable to resolve subject_ref');
+      throw new BadRequestException(
+        subjectLookup.trace.error ?? 'Unable to resolve subject_ref',
+      );
     }
 
     if (!device) {
@@ -172,7 +180,7 @@ export class ContextBuilderService {
         action: request.action,
       },
       sources: {
-        identity: `mock-sources/identity.json:${request.subject_ref.type}`,
+        identity: `${subjectLookup.adapter}:${subjectLookup.trace.lookupKey}`,
         device: `mock-sources/devices.json:${request.device_evidence.device_id}`,
         risk: sourceIp
           ? `mock-sources/risks.json:${sourceIp}`
@@ -200,6 +208,62 @@ export class ContextBuilderService {
       redacted,
       result: redacted ? this.sanitizeTracePayload(result) : result,
     };
+  }
+
+  private async resolveIdentity(
+    ref: EvidenceEvaluationRequest['subject_ref'],
+  ): Promise<{
+    result?: SubjectContext;
+    adapter: string;
+    trace: ContextTraceEntry;
+  }> {
+    const started = process.hrtime.bigint();
+
+    try {
+      const resolution: IdentityResolution =
+        await this.identity.resolveSubject(ref);
+      const durationMs = this.elapsedMs(started);
+      const status: ContextTraceEntry['status'] = resolution.subject
+        ? 'ok'
+        : resolution.error
+          ? 'error'
+          : 'miss';
+
+      return {
+        result: resolution.subject,
+        adapter: resolution.adapter,
+        trace: {
+          source: 'identity',
+          adapter: resolution.adapter,
+          operation: 'resolve_subject',
+          lookupKey: resolution.lookupKey,
+          status,
+          durationMs,
+          redacted: true,
+          result: resolution.subject
+            ? this.sanitizeTraceResult('identity', resolution.subject)
+            : undefined,
+          error: resolution.error,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return {
+        result: undefined,
+        adapter: this.identity.mode === 'oidc' ? 'oidc' : 'identity',
+        trace: {
+          source: 'identity',
+          adapter: this.identity.mode === 'oidc' ? 'oidc' : 'identity',
+          operation: 'resolve_subject',
+          lookupKey: `${ref.type}:<error>`,
+          status: 'error',
+          durationMs: this.elapsedMs(started),
+          redacted: true,
+          error: message,
+        },
+      };
+    }
   }
 
   private traceLookup<T>(
@@ -299,16 +363,6 @@ export class ContextBuilderService {
     }
 
     return sanitized;
-  }
-
-  private subjectLookupKey(
-    ref: EvidenceEvaluationRequest['subject_ref'],
-  ): string {
-    if (ref.type === 'jwt' || ref.type === 'mock_token') {
-      return `${ref.type}:${this.mask(ref.token)}`;
-    }
-
-    return `${ref.type}:${ref.user_id ?? '<missing>'}`;
   }
 
   private mask(value: string | undefined): string {

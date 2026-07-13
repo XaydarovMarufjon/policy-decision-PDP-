@@ -60,6 +60,63 @@ Open the PDP test console:
 http://localhost:3000/
 ```
 
+## Identity: Mock vs Real User (OIDC)
+
+The subject (user) can be resolved from two sources, selected by `IDENTITY_MODE`:
+
+- `mock` (default) — resolves the user from `mock-sources/identity.json`.
+- `oidc` — verifies a **real JWT** against an Identity Provider's JWKS and maps
+  its claims (`user`, `role`, `department`, `mfa`) into the canonical subject.
+  Only the identity source changes; device, risk, and resource stay on mock
+  adapters.
+
+### Test as a real user now (offline, no IdP)
+
+A local test-token generator stands in for a real IdP. It writes a JWKS to
+`dev-keys/jwks.json` and prints a signed JWT:
+
+```bash
+npm run gen:token -- --user ali.valiyev --role analyst --department SOC --mfa true
+```
+
+Start the stack in real-user mode and send the printed token as
+`subject_ref.token` with `"type": "jwt"`:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.oidc.yml up -d
+```
+
+`requests/pdp/allow-real-user.json` is a ready template — replace
+`REPLACE_WITH_REAL_JWT` with the generated token, then:
+
+```bash
+curl -s -X POST http://localhost:3000/pdp/evaluate \
+  -H "Content-Type: application/json" \
+  --data-binary @requests/pdp/allow-real-user.json
+```
+
+Tampered signatures, `alg:none` forgeries, wrong issuer, and expired tokens are
+rejected with HTTP 400.
+
+### Switch to a real IdP (Keycloak / Entra / Okta) later
+
+No code change — set env and point at the IdP's JWKS (see `.env.example`):
+
+```bash
+IDENTITY_MODE=oidc
+OIDC_ISSUER=https://keycloak.example.com/realms/soc
+OIDC_JWKS_URL=https://keycloak.example.com/realms/soc/protocol/openid-connect/certs
+OIDC_ROLE_PRIORITY=admin,analyst,auditor,guest
+```
+
+Then send real user access tokens as `subject_ref.token`. Claim mapping defaults
+are Keycloak-style (`preferred_username`, `realm_access.roles`, `department`,
+`amr`) and are each overridable via `OIDC_CLAIM_*` env vars.
+
+Back to mock mode: `docker compose up -d` (without the oidc override).
+
+## Version checks
+
 Check the pinned version:
 
 ```bash

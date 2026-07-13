@@ -3,6 +3,7 @@ import { PdpController } from './pdp.controller';
 import { PdpService } from './pdp.service';
 import { ContextBuilderService } from './context/context-builder.service';
 import { MockSourceRepository } from './context/mock-source.repository';
+import { identityProviderFactory } from './context/identity/identity.providers';
 import { OpaPolicyEngineService } from './policy-engine/opa-policy-engine.service';
 import { PolicyAdministratorService } from './policy-administrator/policy-administrator.service';
 import { AuditLogService } from './audit/audit-log.service';
@@ -13,6 +14,7 @@ import { AuditLogService } from './audit/audit-log.service';
     PdpService,
     ContextBuilderService,
     MockSourceRepository,
+    identityProviderFactory,
     OpaPolicyEngineService,
     PolicyAdministratorService,
     AuditLogService,

@@ -26,7 +26,7 @@ export class PdpService {
   }
 
   async evaluate(request: unknown): Promise<PdpResponse> {
-    const context = this.contextBuilder.build(request);
+    const context = await this.contextBuilder.build(request);
     const engineDecision = await this.policyEngine.evaluate(context.input);
     const administratorDecision = this.policyAdministrator.prepare(
       engineDecision,
