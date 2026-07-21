@@ -340,6 +340,16 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         font-size: 13px;
       }
 
+      .route-flow.audit-route {
+        min-height: 0;
+        max-height: 340px;
+        margin-top: 8px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
       .route-step {
         position: relative;
         display: grid;
@@ -1011,13 +1021,21 @@ export const adminConsoleHtml = String.raw`<!doctype html>
           return;
         }
 
-        routeViewer.innerHTML = route
+        routeViewer.className = "route-flow";
+        routeViewer.innerHTML = routeStepsHtml(route);
+      }
+
+      function routeStepsHtml(route) {
+        return route
           .map(function (step, index) {
             const blocks = [
               routeBlock("Input", step.input),
               routeBlock("Process", step.process),
               routeBlock("Output", step.output)
             ].join("");
+            const payloads = blocks
+              ? '<div class="route-payloads">' + blocks + '</div>'
+              : "";
 
             return [
               '<article class="route-step" style="animation-delay: ' + index * 90 + 'ms">',
@@ -1030,7 +1048,7 @@ export const adminConsoleHtml = String.raw`<!doctype html>
                     '</div>',
                     '<p class="route-description">' + escapeHtml(step.description || "") + '</p>',
                   '</div>',
-                  '<div class="route-payloads">' + blocks + '</div>',
+                  payloads,
                 '</div>',
               '</article>'
             ].join("");
@@ -1121,6 +1139,12 @@ export const adminConsoleHtml = String.raw`<!doctype html>
                   '<div class="audit-subtle">' + escapeHtml((entry.action || "-") + " · " + (policy.matchedPolicyId || "-")) + '</div>',
                   reasonHtml,
                 '</div>',
+                '<details class="audit-details">',
+                  '<summary>Decision route</summary>',
+                  (Array.isArray(entry.route) && entry.route.length
+                    ? '<div class="route-flow audit-route">' + routeStepsHtml(entry.route) + '</div>'
+                    : '<div class="audit-empty">No route recorded for this event.</div>'),
+                '</details>',
                 '<details class="audit-details">',
                   '<summary>View event JSON</summary>',
                   '<pre>' + escapeHtml(pretty(entry)) + '</pre>',

@@ -21,6 +21,13 @@ export interface PdpAuditEvent {
   action: string;
   decision: string;
   reason: string[];
+  route: Array<{
+    order: number;
+    stage: string;
+    title: string;
+    status: string;
+    description: string;
+  }>;
   policy: {
     engine: 'opa';
     opaDecisionId?: string;
@@ -123,6 +130,13 @@ export class AuditLogService {
       action: input.action,
       decision: response.decision,
       reason: response.reason,
+      route: response.route.map((step) => ({
+        order: step.order,
+        stage: step.stage,
+        title: step.title,
+        status: step.status,
+        description: step.description,
+      })),
       policy: {
         engine: response.pe.engine,
         opaDecisionId: response.pe.opaDecisionId,
