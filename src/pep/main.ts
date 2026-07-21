@@ -124,12 +124,36 @@ function buildEvidence(token: string, resourceId: string, action: string): unkno
   };
 }
 
+interface RouteStep {
+  order: number;
+  stage: string;
+  title: string;
+  status: string;
+  description?: string;
+  input?: unknown;
+  process?: unknown;
+  output?: unknown;
+}
+
+interface TraceEntry {
+  source: string;
+  adapter: string;
+  operation: string;
+  lookupKey: string;
+  status: string;
+  durationMs: number;
+  result?: unknown;
+  error?: string;
+}
+
 interface PdpResult {
   ok: boolean;
   decision?: string;
   reason?: string[];
   subject?: Record<string, unknown>;
   enforce?: string;
+  route?: RouteStep[];
+  trace?: TraceEntry[];
   error?: string;
   status: number;
 }
@@ -155,7 +179,10 @@ async function askPdp(
   }
 
   const decision = body.decision as string;
-  const context = body.context as { canonicalInput?: { subject?: Record<string, unknown> } };
+  const context = body.context as {
+    canonicalInput?: { subject?: Record<string, unknown> };
+    trace?: TraceEntry[];
+  };
   const pa = body.pa as { enforcementCommand?: string };
   return {
     ok: true,
@@ -163,6 +190,8 @@ async function askPdp(
     reason: body.reason as string[],
     subject: context?.canonicalInput?.subject,
     enforce: pa?.enforcementCommand,
+    route: body.route as RouteStep[],
+    trace: context?.trace,
     status: decision === 'allow' ? 200 : 403,
   };
 }
@@ -344,7 +373,54 @@ function resourceCard(
       <div class="subject"><b>subject:</b> ${escapeHtml(JSON.stringify(result.subject ?? {}))}</div>
       <div class="reasons"><b>PDP reason</b><ul>${reasons}</ul></div>
       ${data}
-    </div>`;
+    </div>
+    ${renderRoute(result.route)}
+    ${renderTrace(result.trace)}`;
+}
+
+function statusDot(status: string): string {
+  const cls = status === 'ok' ? 'ok' : status === 'miss' ? 'miss' : 'err';
+  return `<span class="dot ${cls}"></span>`;
+}
+
+function renderRoute(route?: RouteStep[]): string {
+  if (!route?.length) return '';
+  const steps = route
+    .map((s) => {
+      const details = JSON.stringify(
+        { input: s.input, process: s.process, output: s.output },
+        null,
+        2,
+      );
+      return `
+      <div class="step">
+        <div class="step-h">${statusDot(s.status)}<span class="ord">${s.order}</span>
+          <span class="stitle">${escapeHtml(s.title)}</span>
+          <span class="stage">${escapeHtml(s.stage)}</span></div>
+        ${s.description ? `<div class="sdesc">${escapeHtml(s.description)}</div>` : ''}
+        <details><summary>input / process / output</summary><pre>${escapeHtml(details)}</pre></details>
+      </div>`;
+    })
+    .join('');
+  return `<div class="card route"><h2>ROUTE — qaror yo'li</h2>${steps}</div>`;
+}
+
+function renderTrace(trace?: TraceEntry[]): string {
+  if (!trace?.length) return '';
+  const rows = trace
+    .map(
+      (t) => `<tr>
+        <td>${statusDot(t.status)}${escapeHtml(t.source)}</td>
+        <td>${escapeHtml(t.adapter)}</td>
+        <td>${escapeHtml(t.lookupKey)}</td>
+        <td>${t.durationMs}ms</td>
+        <td class="tres">${escapeHtml(JSON.stringify(t.result ?? t.error ?? ''))}</td>
+      </tr>`,
+    )
+    .join('');
+  return `<div class="card trace"><h2>CONTEXT TRACE — qaysi manbadan</h2>
+    <table><thead><tr><th>source</th><th>adapter</th><th>key</th><th>dur</th><th>result</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
 }
 
 function topbar(username: string): string {
@@ -379,6 +455,25 @@ function page(title: string, body: string): string {
     .reasons ul{margin:6px 0 0;padding-left:18px;font-size:13px}
     .data{margin-top:16px;padding:16px;background:#052e16;border-radius:8px;color:#bbf7d0}
     a.login{display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none}
+    .card.route,.card.trace{margin-top:14px}
+    .card h2{font-size:13px;color:#94a3b8;margin:0 0 12px;letter-spacing:.5px}
+    .step{border-left:2px solid #334155;padding:0 0 14px 14px;margin-left:6px;position:relative}
+    .step:last-child{padding-bottom:0}
+    .step-h{display:flex;align-items:center;gap:8px;font-size:13px}
+    .ord{background:#334155;color:#cbd5e1;width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px}
+    .stitle{font-weight:600;color:#e2e8f0}
+    .stage{margin-left:auto;font-size:11px;color:#64748b;font-family:ui-monospace,monospace}
+    .sdesc{font-size:12px;color:#94a3b8;margin:4px 0 6px 28px}
+    details{margin:4px 0 0 28px}
+    summary{font-size:11px;color:#60a5fa;cursor:pointer}
+    pre{background:#0b1220;border:1px solid #1e293b;border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;color:#cbd5e1}
+    .dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:0 0 auto}
+    .dot.ok{background:#22c55e}.dot.miss{background:#eab308}.dot.err{background:#ef4444}
+    table{width:100%;border-collapse:collapse;font-size:12px}
+    th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #1e293b;vertical-align:top}
+    th{color:#64748b;font-weight:600}
+    td .dot{margin-right:6px}
+    .tres{font-family:ui-monospace,monospace;color:#93c5fd;max-width:280px;word-break:break-all}
   </style></head><body><div class="wrap"><h1>SentryX PEP · Zero Trust Gateway</h1>${body}</div></body></html>`;
 }
 
