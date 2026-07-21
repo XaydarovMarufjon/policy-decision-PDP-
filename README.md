@@ -148,6 +148,48 @@ Claim mapping defaults are Keycloak-style (`preferred_username`,
 
 Back to mock mode: `docker compose up -d` (without an override).
 
+## Full Zero Trust flow: PEP gateway with browser login
+
+The PEP (Policy Enforcement Point) closes the loop: a user logs in through
+Keycloak in the browser (OIDC authorization-code + PKCE), then the PEP asks the
+PDP to authorize every resource/action before serving it.
+
+```text
+Browser --login--> Keycloak --token--> PEP session
+Browser --request--> PEP --evidence(+token)--> PDP --allow/deny--> permit/serve | block/403
+```
+
+Start the full stack (base + Keycloak + PEP):
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.keycloak.yml \
+  -f docker-compose.pep.yml up -d --build
+```
+
+Open the gateway and log in as `ali.valiyev` / `Passw0rd!`:
+
+```text
+http://localhost:8000/
+```
+
+The protected page shows the PDP decision for the selected `resource:action`.
+Use the buttons to try combinations — e.g. `incident_db:read` is permitted for
+an analyst, `incident_db:write` is denied (403), `case_management:write` is
+permitted. `Logout` ends the session via Keycloak.
+
+The PEP also accepts API calls with a bearer token (returns JSON, HTTP 200/403):
+
+```bash
+TOKEN=$(./scripts/kc-token.sh ali.valiyev)
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $TOKEN" \
+  "http://localhost:8000/?resource=incident_db&action=write"   # -> 403
+```
+
+Ports: PEP `8000`, PDP `3000`, OPA `8181`, Keycloak `8080`.
+
 ## Version checks
 
 Check the pinned version:

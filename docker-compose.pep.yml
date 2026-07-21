@@ -1,0 +1,42 @@
+# PEP gateway override — full Zero Trust flow with browser login.
+#
+# Requires Keycloak (real user) + PDP in oidc mode, so run all three files:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.keycloak.yml \
+#     -f docker-compose.pep.yml up -d --build
+#
+# Then open http://localhost:8000/ and log in as ali.valiyev / Passw0rd!.
+# The PEP asks the PDP to authorize every resource/action before serving it.
+services:
+  pep:
+    build:
+      context: .
+    image: policy-decision-pdp--pdp
+    container_name: zta-pep
+    command: ["node", "dist/pep/main.js"]
+    ports:
+      - "8000:8000"
+    environment:
+      PEP_PORT: "8000"
+      PDP_EVALUATE_URL: "http://pdp:3000/pdp/evaluate"
+      OIDC_AUTH_URL: "http://localhost:8080/realms/soc/protocol/openid-connect/auth"
+      OIDC_TOKEN_URL: "http://keycloak:8080/realms/soc/protocol/openid-connect/token"
+      OIDC_LOGOUT_URL: "http://localhost:8080/realms/soc/protocol/openid-connect/logout"
+      OIDC_CLIENT_ID: "pdp-pep"
+      OIDC_CLIENT_SECRET: "pep-dev-secret"
+      PEP_REDIRECT_URI: "http://localhost:8000/callback"
+      PEP_BASE_URL: "http://localhost:8000"
+      COOKIE_SECRET: "pep-dev-cookie-secret-change-me"
+    depends_on:
+      - pdp
+      - keycloak
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
