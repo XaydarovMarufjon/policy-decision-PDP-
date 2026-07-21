@@ -317,6 +317,14 @@ app.get('/', async (request, reply) => {
 
   const result = await askPdp(resolved.token, resource, action);
 
+  // Wrap the PDP's internal route with the PEP's own enforcement steps so the
+  // page shows the full Zero Trust chain: PEP -> PDP -> PEP enforcement.
+  if (result.ok) {
+    const who =
+      resolved.session?.username ?? (result.subject?.user as string) ?? 'user';
+    result.route = withPepSteps(result, resolved.api, who, resource, action);
+  }
+
   if (resolved.api) {
     return reply.code(result.status).send(result);
   }
@@ -383,6 +391,48 @@ function statusDot(status: string): string {
   return `<span class="dot ${cls}"></span>`;
 }
 
+/** Bracket the PDP route with the PEP's own request + enforcement steps. */
+function withPepSteps(
+  result: PdpResult,
+  api: boolean,
+  user: string,
+  resource: string,
+  action: string,
+): RouteStep[] {
+  const pdp = result.route ?? [];
+  const allow = result.decision === 'allow';
+
+  const pre: RouteStep = {
+    order: 0,
+    stage: 'pep_request',
+    title: 'PEP so‘rovni ushladi',
+    status: 'ok',
+    description: `PEP gateway so‘rovni ushlab, ${
+      api ? 'Authorization: Bearer token' : 'brauzer sessiya cookie'
+    } orqali foydalanuvchi tokenini oldi va PDP ga evidence yubordi.`,
+    process: {
+      mode: api ? 'api (bearer)' : 'browser (session)',
+      user,
+      resource,
+      action,
+      pdpEndpoint: PDP_EVALUATE_URL,
+    },
+  };
+
+  const post: RouteStep = {
+    order: pdp.length + 1,
+    stage: 'pep_enforcement',
+    title: 'PEP qarorni bajardi',
+    status: allow ? 'ok' : 'err',
+    description: allow
+      ? `permit → resurs (${resource}:${action}) foydalanuvchiga berildi (HTTP ${result.status}).`
+      : `block → kirish rad etildi (HTTP ${result.status}).`,
+    process: { enforcement: result.enforce, httpStatus: result.status },
+  };
+
+  return [pre, ...pdp, post];
+}
+
 function renderRoute(route?: RouteStep[]): string {
   if (!route?.length) return '';
   const steps = route
@@ -392,10 +442,11 @@ function renderRoute(route?: RouteStep[]): string {
         null,
         2,
       );
+      const isPep = typeof s.stage === 'string' && s.stage.indexOf('pep_') === 0;
       return `
-      <div class="step">
-        <div class="step-h">${statusDot(s.status)}<span class="ord">${s.order}</span>
-          <span class="stitle">${escapeHtml(s.title)}</span>
+      <div class="step${isPep ? ' pep' : ''}">
+        <div class="step-h">${statusDot(s.status)}<span class="ord">${isPep ? '◆' : s.order}</span>
+          <span class="stitle">${isPep ? '<span class="pepbadge">PEP</span> ' : ''}${escapeHtml(s.title)}</span>
           <span class="stage">${escapeHtml(s.stage)}</span></div>
         ${s.description ? `<div class="sdesc">${escapeHtml(s.description)}</div>` : ''}
         <details><summary>input / process / output</summary><pre>${escapeHtml(details)}</pre></details>
@@ -459,6 +510,9 @@ function page(title: string, body: string): string {
     .card h2{font-size:13px;color:#94a3b8;margin:0 0 12px;letter-spacing:.5px}
     .step{border-left:2px solid #334155;padding:0 0 14px 14px;margin-left:6px;position:relative}
     .step:last-child{padding-bottom:0}
+    .step.pep{border-left-color:#2563eb}
+    .step.pep .ord{background:#2563eb;color:#fff}
+    .pepbadge{background:#2563eb;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;margin-right:4px;vertical-align:middle;letter-spacing:.5px}
     .step-h{display:flex;align-items:center;gap:8px;font-size:13px}
     .ord{background:#334155;color:#cbd5e1;width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px}
     .stitle{font-weight:600;color:#e2e8f0}
