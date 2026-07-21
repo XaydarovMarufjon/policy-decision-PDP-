@@ -131,6 +131,39 @@ claim into the canonical subject. The issuer is pinned to
 `http://localhost:8080/realms/soc` (via `KC_HOSTNAME`) so tokens verify the same
 whether fetched from the host or from inside the compose network.
 
+### Create a user
+
+For a meaningful PDP decision a user needs a **realm role** plus the
+**`department`** and **`mfa`** attributes. Three ways:
+
+1. **Helper script** (Admin API, one call):
+
+   ```bash
+   ./scripts/kc-create-user.sh nodira.tosheva analyst SOC true
+   ./scripts/kc-token.sh nodira.tosheva            # -> real token, PDP allow
+   ```
+
+2. **Admin console** — `http://localhost:8080` → realm `soc` → Users → Add user.
+   The `Department` and `MFA` fields appear under user metadata (declared as
+   managed attributes in the realm). Set a password under Credentials and assign
+   a role under Role mapping.
+
+3. **Realm seed** — add the user to `keycloak/realm-soc.json` (version
+   controlled; applied on a fresh volume import).
+
+Users created via the UI/API **persist** in the `keycloak-data` volume across
+container recreation. Note: `--import-realm` only runs on an empty volume, so
+after the first seed, edits to `realm-soc.json` are not re-imported — wipe the
+volume (`docker volume rm policy-decision-pdp-_keycloak-data`) or import
+manually to re-apply.
+
+> Keycloak 26 note: custom attributes are governed by the declarative user
+> profile. The realm enables them (`department`/`mfa` declared + unmanaged
+> attributes ON); without that, attributes set via the API/UI are silently
+> dropped from tokens. Always create a user with all required fields in one call
+> — a partial `PUT` replaces the whole representation and yields "Account is not
+> fully set up".
+
 ### Point at your own IdP (Entra / Okta / existing Keycloak)
 
 No code change — set env and point at the IdP's JWKS (see `.env.example`):

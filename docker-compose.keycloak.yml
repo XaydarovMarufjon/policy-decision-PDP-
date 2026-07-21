@@ -12,6 +12,12 @@
 # Issuer is pinned to http://localhost:8080/realms/soc via KC_HOSTNAME so tokens
 # verify the same whether fetched from the host or from inside the network. The
 # PDP fetches JWKS over the internal network at http://keycloak:8080.
+#
+# User data persists in the keycloak-data volume, so users created via the admin
+# UI or Admin API survive container recreation. Note: --import-realm only runs on
+# an EMPTY volume; once seeded, edits to realm-soc.json are NOT re-imported
+# (wipe the volume or import manually to re-apply). The realm file is a one-time
+# seed after that.
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.1.4
@@ -30,6 +36,7 @@ services:
       - "8080:8080"
     volumes:
       - ./keycloak/realm-soc.json:/opt/keycloak/data/import/realm-soc.json:ro
+      - keycloak-data:/opt/keycloak/data
     restart: unless-stopped
 
   pdp:
@@ -42,3 +49,6 @@ services:
     depends_on:
       - opa
       - keycloak
+
+volumes:
+  keycloak-data:
