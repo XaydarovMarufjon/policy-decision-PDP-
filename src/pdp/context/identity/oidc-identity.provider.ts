@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import * as jose from 'jose';
 import { SubjectContext, SubjectRef } from '../../pdp.types';
 import { IdentityProvider, IdentityResolution } from './identity-provider';
+import { allowDevDefaults } from '../../../common/dev-secret';
 
 type JwtPayload = Record<string, unknown>;
 
@@ -56,6 +57,23 @@ export class OidcIdentityProvider implements IdentityProvider {
       );
     }
 
+    // Without an audience, jose skips the `aud` check and any token from the
+    // trusted issuer (issued for any client) is accepted — token/client
+    // confusion. Require it, unless explicitly running with dev defaults.
+    if (!this.audience) {
+      if (allowDevDefaults()) {
+        this.logger.warn(
+          'OIDC_AUDIENCE is unset; the `aud` claim will NOT be checked. ' +
+            'Set OIDC_AUDIENCE in production.',
+        );
+      } else {
+        throw new Error(
+          'IDENTITY_MODE=oidc requires OIDC_AUDIENCE to be set (expected token audience). ' +
+            'Set ALLOW_DEV_DEFAULTS=true to skip the aud check in dev.',
+        );
+      }
+    }
+
     const jwksFile = this.env('OIDC_JWKS_FILE');
     if (jwksFile) {
       const raw = JSON.parse(readFileSync(jwksFile, 'utf8'));
@@ -82,7 +100,7 @@ export class OidcIdentityProvider implements IdentityProvider {
     };
 
     const token = ref.token;
-    if (!token || (ref.type !== 'jwt' && ref.type !== 'mock_token')) {
+    if (!token || ref.type !== 'jwt') {
       return {
         ...base,
         error: 'OIDC identity requires subject_ref.type=jwt with a token',

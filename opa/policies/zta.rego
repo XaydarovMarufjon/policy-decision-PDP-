@@ -51,11 +51,6 @@ action_allowed if {
   action in object.get(object.get(role_policy, "resources", {}), resource_name, [])
 }
 
-resource_attributes_match if {
-  object.get(input_resource, "type", "") == object.get(resource_policy, "type", "")
-  object.get(input_resource, "criticality", "") == object.get(resource_policy, "criticality", "")
-}
-
 mfa_ok if {
   not object.get(resource_policy, "required_mfa", false)
 }
@@ -123,11 +118,6 @@ blocking_reasons contains "Action is not allowed for this role and resource" if 
   known_role
   known_resource
   not action_allowed
-}
-
-blocking_reasons contains "Resource attributes do not match inventory" if {
-  known_resource
-  not resource_attributes_match
 }
 
 blocking_reasons contains "MFA is required" if {

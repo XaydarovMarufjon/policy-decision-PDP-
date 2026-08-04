@@ -745,6 +745,8 @@ export const adminConsoleHtml = String.raw`<!doctype html>
     </div>
 
     <script>
+      // Injected server-side (dev only) so the console can call the guarded PDP routes.
+      const PDP_SHARED_SECRET = "__PDP_SHARED_SECRET__";
       const samples = {
         allowEvidence: {
           request_id: "req-allow-001",
@@ -1087,7 +1089,9 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         auditStatus.className = "chip";
 
         try {
-          const response = await fetch("/pdp/audit?limit=20");
+          const response = await fetch("/pdp/audit?limit=20", {
+            headers: { "X-PDP-Auth": PDP_SHARED_SECRET }
+          });
           const body = await response.json();
 
           if (!response.ok) {
@@ -1182,7 +1186,10 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         try {
           const response = await fetch("/pdp/evaluate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-PDP-Auth": PDP_SHARED_SECRET
+            },
             body: JSON.stringify(payload)
           });
           const body = await response.json();

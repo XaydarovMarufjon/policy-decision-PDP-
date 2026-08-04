@@ -1,33 +1,70 @@
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import {
   AccessEvaluationInput,
   ContextBuildResult,
   ContextTraceEntry,
+  DeviceContext,
   EvidenceEvaluationRequest,
+  ResourceContext,
   RiskContext,
   SubjectContext,
 } from '../pdp.types';
-import { MockSourceRepository } from './mock-source.repository';
 import {
   IDENTITY_PROVIDER,
   IdentityProvider,
   IdentityResolution,
 } from './identity/identity-provider';
+import {
+  RISK_PROVIDER,
+  RiskProvider,
+  RiskResolution,
+} from './risk/risk-provider';
+import {
+  DEVICE_PROVIDER,
+  DeviceProvider,
+  DeviceResolution,
+} from './device/device-provider';
+import {
+  RESOURCE_PROVIDER,
+  ResourceProvider,
+  ResourceResolution,
+} from './resource/resource-provider';
 
 type JsonRecord = Record<string, unknown>;
 
 @Injectable()
 export class ContextBuilderService {
+  // Canonical input is trusted verbatim (no token/signature check), so it is a
+  // privilege-assertion path. Disabled by default; enable only for dev/test.
+  private readonly allowCanonical =
+    process.env.ALLOW_CANONICAL_INPUT === 'true';
+
   constructor(
-    private readonly sources: MockSourceRepository,
     @Inject(IDENTITY_PROVIDER)
     private readonly identity: IdentityProvider,
+    @Inject(RISK_PROVIDER)
+    private readonly riskProvider: RiskProvider,
+    @Inject(DEVICE_PROVIDER)
+    private readonly deviceProvider: DeviceProvider,
+    @Inject(RESOURCE_PROVIDER)
+    private readonly resourceProvider: ResourceProvider,
   ) {}
 
   async build(request: unknown): Promise<ContextBuildResult> {
     const body = this.asRecord(request, 'request body');
 
     if (this.isCanonicalRequest(body)) {
+      if (!this.allowCanonical) {
+        throw new ForbiddenException(
+          'Canonical input is disabled. Submit evidence input ' +
+            '(subject_ref, device_evidence, resource_ref, action) so identity is verified.',
+        );
+      }
       return this.buildFromCanonical(body);
     }
 
@@ -110,36 +147,21 @@ export class ContextBuilderService {
       );
     }
 
-    const subjectLookup = await this.resolveIdentity(request.subject_ref);
-    trace.push(subjectLookup.trace);
-
-    const deviceId = request.device_evidence?.device_id;
-    const deviceLookup = this.traceLookup(
-      'device',
-      'mock-sources/devices.json',
-      'resolve_device',
-      deviceId ?? '<missing>',
-      () => this.sources.resolveDevice(deviceId),
+    // The four sources are independent. Resolve them concurrently so request
+    // latency is bounded by the slowest provider instead of their sum.
+    const [subjectLookup, deviceLookup, resourceLookup, riskLookup] =
+      await Promise.all([
+        this.resolveIdentity(request.subject_ref),
+        this.resolveDeviceSource(request.device_evidence),
+        this.resolveResourceSource(request.resource_ref),
+        this.resolveRiskSource(sourceIp),
+      ]);
+    trace.push(
+      subjectLookup.trace,
+      deviceLookup.trace,
+      resourceLookup.trace,
+      riskLookup.trace,
     );
-    trace.push(deviceLookup.trace);
-
-    const resourceLookup = this.traceLookup(
-      'resource',
-      'mock-sources/resources.json',
-      'resolve_resource',
-      request.resource_ref.resource_id,
-      () => this.sources.resolveResource(request.resource_ref.resource_id),
-    );
-    trace.push(resourceLookup.trace);
-
-    const riskLookup = this.traceLookup(
-      'risk',
-      'mock-sources/risks.json',
-      'resolve_risk',
-      sourceIp ?? 'default',
-      () => this.sources.resolveRisk(sourceIp),
-    );
-    trace.push(riskLookup.trace);
 
     const subject = subjectLookup.result;
     const device = deviceLookup.result;
@@ -153,11 +175,15 @@ export class ContextBuilderService {
     }
 
     if (!device) {
-      throw new BadRequestException('Unable to resolve device_evidence');
+      throw new BadRequestException(
+        deviceLookup.trace.error ?? 'Unable to resolve device_evidence',
+      );
     }
 
     if (!resource) {
-      throw new BadRequestException('Unable to resolve resource_ref');
+      throw new BadRequestException(
+        resourceLookup.trace.error ?? 'Unable to resolve resource_ref',
+      );
     }
 
     if (!sourceRisk) {
@@ -181,11 +207,9 @@ export class ContextBuilderService {
       },
       sources: {
         identity: `${subjectLookup.adapter}:${subjectLookup.trace.lookupKey}`,
-        device: `mock-sources/devices.json:${request.device_evidence.device_id}`,
-        risk: sourceIp
-          ? `mock-sources/risks.json:${sourceIp}`
-          : 'mock-sources/risks.json:default',
-        resource: `mock-sources/resources.json:${request.resource_ref.resource_id}`,
+        device: `${deviceLookup.adapter}:${deviceLookup.trace.lookupKey}`,
+        risk: `${riskLookup.adapter}:${riskLookup.trace.lookupKey}`,
+        resource: `${resourceLookup.adapter}:${resourceLookup.trace.lookupKey}`,
       },
       trace,
       warnings: [],
@@ -266,30 +290,38 @@ export class ContextBuilderService {
     }
   }
 
-  private traceLookup<T>(
-    source: 'identity' | 'device' | 'risk' | 'resource',
-    adapter: string,
-    operation: string,
-    lookupKey: string,
-    lookup: () => T | undefined,
-  ): { result: T | undefined; trace: ContextTraceEntry } {
+  private async resolveRiskSource(sourceIp: string | undefined): Promise<{
+    result?: RiskContext;
+    adapter: string;
+    trace: ContextTraceEntry;
+  }> {
     const started = process.hrtime.bigint();
 
     try {
-      const result = lookup();
+      const resolution: RiskResolution =
+        await this.riskProvider.resolveRisk(sourceIp);
       const durationMs = this.elapsedMs(started);
+      const status: ContextTraceEntry['status'] = resolution.error
+        ? 'error'
+        : resolution.risk
+          ? 'ok'
+          : 'miss';
 
       return {
-        result,
+        result: resolution.risk,
+        adapter: resolution.adapter,
         trace: {
-          source,
-          adapter,
-          operation,
-          lookupKey,
-          status: result ? 'ok' : 'miss',
+          source: 'risk',
+          adapter: resolution.adapter,
+          operation: 'resolve_risk',
+          lookupKey: resolution.lookupKey,
+          status,
           durationMs,
           redacted: true,
-          result: result ? this.sanitizeTraceResult(source, result) : undefined,
+          result: resolution.risk
+            ? this.sanitizeTraceResult('risk', resolution.risk)
+            : undefined,
+          error: resolution.error,
         },
       };
     } catch (error) {
@@ -297,11 +329,126 @@ export class ContextBuilderService {
 
       return {
         result: undefined,
+        adapter: this.riskProvider.mode === 'misp' ? 'misp' : 'risk',
         trace: {
-          source,
-          adapter,
-          operation,
-          lookupKey,
+          source: 'risk',
+          adapter: this.riskProvider.mode === 'misp' ? 'misp' : 'risk',
+          operation: 'resolve_risk',
+          lookupKey: sourceIp ?? 'default',
+          status: 'error',
+          durationMs: this.elapsedMs(started),
+          redacted: true,
+          error: message,
+        },
+      };
+    }
+  }
+
+  private async resolveDeviceSource(
+    evidence: EvidenceEvaluationRequest['device_evidence'],
+  ): Promise<{
+    result?: DeviceContext;
+    adapter: string;
+    trace: ContextTraceEntry;
+  }> {
+    const started = process.hrtime.bigint();
+
+    try {
+      const resolution: DeviceResolution =
+        await this.deviceProvider.resolveDevice(evidence);
+      const durationMs = this.elapsedMs(started);
+      const status: ContextTraceEntry['status'] = resolution.error
+        ? 'error'
+        : resolution.device
+          ? 'ok'
+          : 'miss';
+
+      return {
+        result: resolution.device,
+        adapter: resolution.adapter,
+        trace: {
+          source: 'device',
+          adapter: resolution.adapter,
+          operation: 'resolve_device',
+          lookupKey: resolution.lookupKey,
+          status,
+          durationMs,
+          redacted: true,
+          result: resolution.device
+            ? this.sanitizeTraceResult('device', resolution.device)
+            : undefined,
+          error: resolution.error,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return {
+        result: undefined,
+        adapter: this.deviceProvider.mode === 'wazuh' ? 'wazuh' : 'device',
+        trace: {
+          source: 'device',
+          adapter: this.deviceProvider.mode === 'wazuh' ? 'wazuh' : 'device',
+          operation: 'resolve_device',
+          lookupKey: evidence?.device_id ?? '<missing>',
+          status: 'error',
+          durationMs: this.elapsedMs(started),
+          redacted: true,
+          error: message,
+        },
+      };
+    }
+  }
+
+  private async resolveResourceSource(
+    ref: EvidenceEvaluationRequest['resource_ref'],
+  ): Promise<{
+    result?: ResourceContext;
+    adapter: string;
+    trace: ContextTraceEntry;
+  }> {
+    const started = process.hrtime.bigint();
+
+    try {
+      const resolution: ResourceResolution =
+        await this.resourceProvider.resolveResource(ref);
+      const durationMs = this.elapsedMs(started);
+      const status: ContextTraceEntry['status'] = resolution.error
+        ? 'error'
+        : resolution.resource
+          ? 'ok'
+          : 'miss';
+
+      return {
+        result: resolution.resource,
+        adapter: resolution.adapter,
+        trace: {
+          source: 'resource',
+          adapter: resolution.adapter,
+          operation: 'resolve_resource',
+          lookupKey: resolution.lookupKey,
+          status,
+          durationMs,
+          redacted: true,
+          result: resolution.resource
+            ? this.sanitizeTraceResult('resource', resolution.resource)
+            : undefined,
+          error: resolution.error,
+        },
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
+      return {
+        result: undefined,
+        adapter:
+          this.resourceProvider.mode === 'opa-data' ? 'opa-data' : 'resource',
+        trace: {
+          source: 'resource',
+          adapter:
+            this.resourceProvider.mode === 'opa-data' ? 'opa-data' : 'resource',
+          operation: 'resolve_resource',
+          lookupKey: ref.resource_id,
           status: 'error',
           durationMs: this.elapsedMs(started),
           redacted: true,

@@ -1,9 +1,10 @@
 # Real-user (OIDC) override for the PDP.
 #
 # Local offline testing with the dev JWKS (no external IdP):
-#   npm run gen:token -- --user ali.valiyev --role analyst --department SOC --mfa true
+#   npm run gen:token -- --user ali.valiyev --role analyst --department SOC --mfa true --audience pdp
 #   docker compose -f docker-compose.yml -f docker-compose.oidc.yml up -d
 #   # send the printed JWT as subject_ref.token (type "jwt")
+#   # The token's aud must match OIDC_AUDIENCE below (pdp), else verification fails.
 #
 # Real IdP (when you have one): set OIDC_ISSUER + OIDC_JWKS_URL to your IdP,
 # remove OIDC_JWKS_FILE and the dev-keys volume below, then use real user tokens.
@@ -16,6 +17,7 @@ services:
       #   OIDC_JWKS_URL: "https://keycloak.example.com/realms/soc/protocol/openid-connect/certs"
       OIDC_ISSUER: "urn:pdp-dev"
       OIDC_JWKS_FILE: "/app/dev-keys/jwks.json"
+      OIDC_AUDIENCE: "pdp"
       OIDC_ROLE_PRIORITY: "admin,analyst,auditor,guest"
     volumes:
       # Only needed for offline OIDC_JWKS_FILE testing. Not needed with a real IdP.

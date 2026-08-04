@@ -9,6 +9,7 @@ import {
   AdministratorDecision,
   EngineDecision,
   PdpResponse,
+  PdpEnforcementResponse,
   PdpRouteStep,
 } from './pdp.types';
 
@@ -23,6 +24,27 @@ export class PdpService {
 
   get opaDecisionUrl(): string {
     return this.policyEngine.opaDecisionUrl;
+  }
+
+  ready(): Promise<boolean> {
+    return this.policyEngine.ready();
+  }
+
+  toEnforcementResponse(response: PdpResponse): PdpEnforcementResponse {
+    return {
+      decisionId: response.decisionId,
+      requestId: response.requestId,
+      evaluatedAt: response.evaluatedAt,
+      decision: response.decision,
+      reason: response.reason,
+      subject: {
+        user: response.context.canonicalInput.subject.user,
+        role: response.context.canonicalInput.subject.role,
+      },
+      enforcementCommand: response.pa.enforcementCommand,
+      ttlSeconds: response.pa.ttlSeconds,
+      obligations: response.pa.obligations,
+    };
   }
 
   async evaluate(request: unknown): Promise<PdpResponse> {
@@ -67,7 +89,7 @@ export class PdpService {
       pa: administratorDecision,
     };
 
-    this.auditLog.recordDecision(response);
+    await this.auditLog.recordDecision(response);
 
     return response;
   }

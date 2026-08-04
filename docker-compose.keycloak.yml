@@ -44,6 +44,11 @@ services:
       IDENTITY_MODE: "oidc"
       OIDC_ISSUER: "http://localhost:8080/realms/soc"
       OIDC_JWKS_URL: "http://keycloak:8080/realms/soc/protocol/openid-connect/certs"
+      # The realm's pdp-audience mapper stamps aud=pdp on access tokens; the PDP
+      # requires it. If you have an OLD keycloak-data volume seeded before this
+      # mapper was added, wipe it to re-import:
+      #   docker volume rm policy-decision-pdp-_keycloak-data
+      OIDC_AUDIENCE: "pdp"
       OIDC_ROLE_PRIORITY: "admin,analyst,auditor,guest"
       OIDC_CLAIM_MFA: "mfa"
     depends_on:

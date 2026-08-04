@@ -1,0 +1,44 @@
+# Demo protected web-app ("my_app") behind the PEP reverse proxy.
+#
+# The app publishes NO ports — it is reachable ONLY through the PEP on the
+# internal docker network. That network isolation is what makes the Zero Trust
+# enforcement real: there is no path to the app that skips the PDP decision.
+#
+# Run on top of the full PEP stack:
+#
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.keycloak.yml \
+#     -f docker-compose.pep.yml \
+#     -f docker-compose.app.yml up -d --build
+#
+# Then open http://localhost:8000/app/ and log in as ali.valiyev / Passw0rd!.
+# analyst has my_app: [read, write] — viewing and adding notes works, but the
+# Delete button is blocked by the PDP (403) because `delete` is not granted.
+services:
+  demo-app:
+    build:
+      context: .
+    image: policy-decision-pdp--pdp
+    container_name: zta-demo-app
+    command: ["node", "dist/demo-app/main.js"]
+    # No `ports:` on purpose — never expose the app directly.
+    expose:
+      - "5000"
+    environment:
+      APP_PORT: "5000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  pep:
+    environment:
+      APP_UPSTREAM_URL: "http://demo-app:5000"
+      APP_RESOURCE_ID: "my_app"
+    depends_on:
+      - demo-app

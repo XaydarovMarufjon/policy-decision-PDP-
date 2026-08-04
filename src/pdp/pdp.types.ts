@@ -157,6 +157,19 @@ export interface PdpResponse {
   pa: AdministratorDecision;
 }
 
+/** Minimal contract exposed to enforcement points in production. */
+export interface PdpEnforcementResponse {
+  decisionId: string;
+  requestId?: string;
+  evaluatedAt: string;
+  decision: Decision;
+  reason: string[];
+  subject: Pick<SubjectContext, 'user' | 'role'>;
+  enforcementCommand: EnforcementCommand;
+  ttlSeconds: number;
+  obligations: string[];
+}
+
 export interface PdpRouteStep {
   order: number;
   stage:

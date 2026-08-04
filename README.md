@@ -1,12 +1,36 @@
 # Policy Engine PDP
 
+## Documentation
+
+- [Tizim arxitekturasi](docs/ARCHITECTURE.md)
+- [Boshqa tizimlarni integratsiya qilish](docs/INTEGRATION.md)
+- [Ishga tushirish va operatsiya](docs/OPERATIONS.md)
+- [O‘zgarishlar tarixi](docs/CHANGELOG.md)
+
+Har bir arxitektura, konfiguratsiya yoki operatsion o‘zgarish tegishli hujjat va
+`docs/CHANGELOG.md` bilan birga yangilanishi kerak.
+
 This stage contains a PDP wrapper around OPA:
 
 ```text
 Manual request -> PDP Context Builder -> OPA / PE -> PA -> PDP response
 ```
 
-It does not include a real PEP, database, identity source, SIEM, or device source integration yet. Those external systems are simulated with local JSON files under `mock-sources/`.
+Each decision signal comes from a **pluggable provider**, selected by env so mocks
+can be swapped for real systems one at a time (see the target architecture in the
+plan). Current sources:
+
+| Signal | Env | `mock` (default JSON) | Real |
+| --- | --- | --- | --- |
+| identity | `IDENTITY_MODE` | `mock-sources/identity.json` | `oidc` (JWKS-verified JWT) |
+| risk | `RISK_MODE` | `mock-sources/risks.json` | `misp`, `wazuh`, `wazuh-misp` (composite) |
+| device | `DEVICE_MODE` | `mock-sources/devices.json` | `wazuh` (live EDR posture) |
+| resource | `RESOURCE_MODE` | `mock-sources/resources.json` | `opa-data` **(default)** |
+
+`RESOURCE_MODE=opa-data` (the default) reads the resource inventory straight from
+`opa/data/zta.json`, so OPA is the single source of truth for resources — no
+duplicated `resources.json` to drift. The PEP sends the **real client IP**
+(`PEP_TRUST_PROXY` controls proxy trust), not a hardcoded value.
 
 OPA is pinned to `openpolicyagent/opa:1.18.2` for production-style repeatability. Do not use `latest` for production.
 
@@ -46,6 +70,18 @@ inputs/
 ```bash
 docker compose up -d --build
 ```
+
+The base compose file is a local-development stack. For a hardened deployment,
+use the production overlay and provide secrets through your secret manager:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pep.yml \
+  -f docker-compose.prod.yml up -d --build
+```
+
+The production overlay disables canonical input and debug responses, removes
+direct PDP/OPA host ports, requires secrets, enables readiness checks, and makes
+audit persistence mandatory.
 
 Health checks:
 
@@ -222,6 +258,35 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 ```
 
 Ports: PEP `8000`, PDP `3000`, OPA `8181`, Keycloak `8080`.
+
+## Protecting a real app: PEP reverse proxy (`/app/*`)
+
+The PEP can front an ordinary web-app that knows nothing about Zero Trust.
+`docker-compose.app.yml` adds `demo-app` (a small notes app on internal port
+5000, **no published ports** — reachable only through the PEP), and the PEP
+proxies `/app/*` to it after a PDP `allow`:
+
+```text
+Browser --/app/*--> PEP --evidence--> PDP --allow--> proxy to demo-app:5000
+                                          --deny---> 403 (request never reaches the app)
+```
+
+```bash
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.keycloak.yml \
+  -f docker-compose.pep.yml \
+  -f docker-compose.app.yml up -d --build
+```
+
+Open `http://localhost:8000/app/` and log in as `ali.valiyev` / `Passw0rd!`.
+The HTTP method maps to the ZTA action: `GET -> read`, `POST/PUT/PATCH ->
+write`, `DELETE -> delete`. The analyst role has `my_app: [read, write]`, so
+viewing and adding notes works, but the Delete button returns 403 from the PDP.
+The app receives the verified identity as `X-User` / `X-Role` headers (never
+the raw token). To protect your own app instead, point `APP_UPSTREAM_URL` at it
+and register its resource id (`APP_RESOURCE_ID`) with role grants in
+`opa/data/zta.json`.
 
 ## Version checks
 

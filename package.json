@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "dev": "tsx watch src/main.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "tsx --test test/**/*.test.ts",
     "gen:token": "tsx scripts/generate-test-token.ts",
     "test:pdp:allow": "curl -s -X POST http://localhost:3000/pdp/evaluate -H 'Content-Type: application/json' --data-binary @requests/pdp/allow-evidence.json",
     "test:pdp:deny": "curl -s -X POST http://localhost:3000/pdp/evaluate -H 'Content-Type: application/json' --data-binary @requests/pdp/deny-high-risk-evidence.json",

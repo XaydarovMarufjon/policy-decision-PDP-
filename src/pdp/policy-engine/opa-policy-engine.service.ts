@@ -20,6 +20,22 @@ export class OpaPolicyEngineService implements PolicyEngine {
   readonly opaDecisionUrl =
     process.env.OPA_DECISION_URL ??
     'http://localhost:8181/v1/data/sentryx/zta/decision';
+  private readonly timeoutMs = this.positiveNumber(
+    process.env.OPA_TIMEOUT_MS,
+    2000,
+  );
+
+  async ready(): Promise<boolean> {
+    try {
+      const url = new URL('/health', this.opaDecisionUrl);
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
 
   async evaluate(input: AccessEvaluationInput): Promise<EngineDecision> {
     let response: Response;
@@ -31,6 +47,7 @@ export class OpaPolicyEngineService implements PolicyEngine {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ input }),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -60,5 +77,13 @@ export class OpaPolicyEngineService implements PolicyEngine {
       engine: 'opa',
       opaDecisionId: body.decision_id,
     };
+  }
+
+  private positiveNumber(value: string | undefined, fallback: number): number {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error('OPA_TIMEOUT_MS must be a positive number');
+    }
+    return parsed;
   }
 }

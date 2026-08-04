@@ -22,9 +22,7 @@ export const identityProviderFactory: Provider = {
     }
 
     if (mode !== 'mock') {
-      logger.warn(
-        `Unknown IDENTITY_MODE="${mode}", falling back to mock identity provider`,
-      );
+      throw new Error(`Unsupported IDENTITY_MODE="${mode}" (expected mock or oidc)`);
     }
 
     return new MockIdentityProvider(sources);

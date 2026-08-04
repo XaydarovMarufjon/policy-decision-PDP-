@@ -1,0 +1,39 @@
+# Real device posture + SIEM risk via a LIVE Wazuh, composed with MISP threat-intel.
+#
+# Point the PDP at your existing Wazuh Server API (:55000) and Indexer (:9200).
+# All connection values come from the shell environment (or a local .env file) so
+# real credentials are never committed. Example:
+#
+#   export WAZUH_API_URL=https://host.docker.internal:55000
+#   export WAZUH_API_USER=wazuh-wui WAZUH_API_PASSWORD=...
+#   export WAZUH_INDEXER_URL=https://host.docker.internal:9200
+#   export WAZUH_INDEXER_USER=admin WAZUH_INDEXER_PASSWORD=...
+#   export MISP_URL=http://misp-core:80 MISP_API_KEY=...
+#   docker compose -f docker-compose.yml -f docker-compose.keycloak.yml \
+#     -f docker-compose.misp.yml -f docker-compose.wazuh.yml up -d --build pdp
+#
+# NOTE: from inside the compose network, "localhost" is the container, not your
+# host. If Wazuh runs on the Docker host, use host.docker.internal (macOS/Windows)
+# or the host's LAN IP (Linux). Wazuh serves self-signed TLS by default, hence
+# WAZUH_VERIFY_TLS defaults to false here.
+services:
+  pdp:
+    environment:
+      DEVICE_MODE: "wazuh"
+      RISK_MODE: "wazuh-misp"
+      WAZUH_API_URL: "${WAZUH_API_URL:-}"
+      WAZUH_API_USER: "${WAZUH_API_USER:-}"
+      WAZUH_API_PASSWORD: "${WAZUH_API_PASSWORD:-}"
+      WAZUH_INDEXER_URL: "${WAZUH_INDEXER_URL:-}"
+      WAZUH_INDEXER_USER: "${WAZUH_INDEXER_USER:-}"
+      WAZUH_INDEXER_PASSWORD: "${WAZUH_INDEXER_PASSWORD:-}"
+      WAZUH_VERIFY_TLS: "${WAZUH_VERIFY_TLS:-false}"
+      WAZUH_TIMEOUT_MS: "${WAZUH_TIMEOUT_MS:-4000}"
+      WAZUH_FAIL_OPEN: "${WAZUH_FAIL_OPEN:-false}"
+      WAZUH_ALERTS_INDEX: "${WAZUH_ALERTS_INDEX:-wazuh-alerts-*}"
+      WAZUH_VULN_INDEX: "${WAZUH_VULN_INDEX:-wazuh-states-vulnerabilities-*}"
+      WAZUH_ALERTS_WINDOW: "${WAZUH_ALERTS_WINDOW:-24h}"
+      # Composite risk also needs MISP (threat_intel_match):
+      MISP_URL: "${MISP_URL:-}"
+      MISP_API_KEY: "${MISP_API_KEY:-}"
+      MISP_FAIL_OPEN: "${MISP_FAIL_OPEN:-false}"

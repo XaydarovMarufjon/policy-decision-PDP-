@@ -64,6 +64,16 @@
             "id.token.claim": "true",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "pdp-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "pdp",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
         }
       ]
     },
@@ -99,6 +109,16 @@
             "claim.name": "mfa",
             "jsonType.label": "boolean",
             "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "pdp-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "pdp",
+            "id.token.claim": "false",
             "access.token.claim": "true"
           }
         }

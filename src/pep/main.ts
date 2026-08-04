@@ -15,13 +15,20 @@
  *   - API:     `Authorization: Bearer <access_token>` (e.g. from kc-token.sh),
  *              returns JSON instead of HTML.
  */
-import { createHash, randomBytes } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+} from 'crypto';
 import Fastify, { FastifyReply, FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
+import { requireSecret } from '../common/dev-secret';
 
 const PORT = Number(process.env.PEP_PORT ?? 8000);
 const PDP_EVALUATE_URL =
   process.env.PDP_EVALUATE_URL ?? 'http://pdp:3000/pdp/evaluate';
+const PDP_DEBUG_RESPONSE = process.env.PDP_DEBUG_RESPONSE === 'true';
 const OIDC_AUTH_URL =
   process.env.OIDC_AUTH_URL ??
   'http://localhost:8080/realms/soc/protocol/openid-connect/auth';
@@ -32,12 +39,36 @@ const OIDC_LOGOUT_URL =
   process.env.OIDC_LOGOUT_URL ??
   'http://localhost:8080/realms/soc/protocol/openid-connect/logout';
 const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? 'pdp-pep';
-const CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET ?? 'pep-dev-secret';
+// Fail closed: refuse to boot with a well-known secret unless ALLOW_DEV_DEFAULTS=true.
+const CLIENT_SECRET = requireSecret('OIDC_CLIENT_SECRET', {
+  devDefault: 'pep-dev-secret',
+});
 const REDIRECT_URI =
   process.env.PEP_REDIRECT_URI ?? 'http://localhost:8000/callback';
 const BASE_URL = process.env.PEP_BASE_URL ?? 'http://localhost:8000';
-const COOKIE_SECRET =
-  process.env.COOKIE_SECRET ?? 'pep-dev-cookie-secret-change-me';
+const COOKIE_SECRET = requireSecret('COOKIE_SECRET', {
+  devDefault: 'pep-dev-cookie-secret-change-me',
+});
+// Shared secret the PEP presents to the PDP on every evaluate call.
+const PDP_SHARED_SECRET = requireSecret('PDP_SHARED_SECRET', {
+  devDefault: 'pdp-dev-shared-secret',
+});
+// Reverse-proxy mode: the upstream app served under /app/* after a PDP allow.
+// The app itself has no auth — it must only be reachable through this PEP.
+const APP_UPSTREAM_URL = process.env.APP_UPSTREAM_URL ?? 'http://demo-app:5000';
+const APP_RESOURCE_ID = process.env.APP_RESOURCE_ID ?? 'my_app';
+const OUTBOUND_TIMEOUT_MS = positiveNumber(
+  process.env.PEP_OUTBOUND_TIMEOUT_MS,
+  4000,
+);
+
+function positiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error('PEP_OUTBOUND_TIMEOUT_MS must be a positive number');
+  }
+  return parsed;
+}
 
 interface Session {
   accessToken: string;
@@ -45,8 +76,41 @@ interface Session {
   username: string;
 }
 
-// Single-instance in-memory session store (demo). A real PEP uses Redis/JWT.
-const sessions = new Map<string, Session>();
+// Encrypted, authenticated stateless sessions work across replicas as long as
+// they share COOKIE_SECRET. Access tokens never appear as plaintext cookies.
+const SESSION_KEY = createHash('sha256').update(COOKIE_SECRET).digest();
+
+function sealSession(session: Session): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', SESSION_KEY, iv);
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(session), 'utf8'),
+    cipher.final(),
+  ]);
+  return [iv, cipher.getAuthTag(), ciphertext]
+    .map((part) => part.toString('base64url'))
+    .join('.');
+}
+
+function openSession(value: string): Session | undefined {
+  try {
+    const [ivRaw, tagRaw, ciphertextRaw] = value.split('.');
+    if (!ivRaw || !tagRaw || !ciphertextRaw) return undefined;
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      SESSION_KEY,
+      Buffer.from(ivRaw, 'base64url'),
+    );
+    decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
+    const plaintext = Buffer.concat([
+      decipher.update(Buffer.from(ciphertextRaw, 'base64url')),
+      decipher.final(),
+    ]).toString('utf8');
+    return JSON.parse(plaintext) as Session;
+  } catch {
+    return undefined;
+  }
+}
 
 const b64url = (buf: Buffer): string =>
   buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -66,8 +130,22 @@ function decodeJwt(token: string): Record<string, unknown> {
   }
 }
 
-const app = Fastify({ logger: true });
+// Trust proxy so request.ip reflects the real client behind an upstream LB.
+// Default OFF (use the socket peer address, not spoofable). Set PEP_TRUST_PROXY
+// to "true" (trust all) or a comma-separated CIDR list of known proxies.
+const TRUST_PROXY = process.env.PEP_TRUST_PROXY;
+const app = Fastify({
+  logger: true,
+  trustProxy: TRUST_PROXY === 'true' ? true : (TRUST_PROXY ?? false),
+});
 app.register(cookie, { secret: COOKIE_SECRET });
+
+// Proxy mode: keep request bodies as raw buffers so they can be forwarded to
+// the upstream app byte-for-byte (no PEP route parses a body itself).
+app.removeAllContentTypeParsers();
+app.addContentTypeParser('*', { parseAs: 'buffer' }, (_req, body, done) =>
+  done(null, body),
+);
 
 /** Resolve the caller's access token: Bearer header (API) or session (browser). */
 function resolveToken(
@@ -82,7 +160,7 @@ function resolveToken(
   if (raw) {
     const unsigned = request.unsignCookie(raw);
     if (unsigned.valid && unsigned.value) {
-      const session = sessions.get(unsigned.value);
+      const session = openSession(unsigned.value);
       if (session) {
         return { token: session.accessToken, api: false, session };
       }
@@ -93,7 +171,12 @@ function resolveToken(
 }
 
 /** Build the canonical evidence request the PDP expects. */
-function buildEvidence(token: string, resourceId: string, action: string): unknown {
+function buildEvidence(
+  token: string,
+  resourceId: string,
+  action: string,
+  clientIp: string,
+): unknown {
   return {
     request_id: `pep-${randomToken().slice(0, 8)}`,
     request_metadata: { client: 'pep-gateway', received_at: undefined },
@@ -108,11 +191,10 @@ function buildEvidence(token: string, resourceId: string, action: string): unkno
       certificate_fingerprint: 'sha256:pep-device-cert',
     },
     network: {
-      source_ip: '10.10.80.55',
-      source_port: 54822,
+      // Real client IP from the connection (see PEP_TRUST_PROXY). This is the
+      // key MISP/Wazuh risk lookups use — no longer a hardcoded constant.
+      source_ip: clientIp,
       protocol: 'https',
-      geo_country: 'UZ',
-      network_zone: 'corp-vpn',
     },
     resource_ref: {
       resource_id: resourceId,
@@ -162,12 +244,28 @@ async function askPdp(
   token: string,
   resourceId: string,
   action: string,
+  clientIp: string,
 ): Promise<PdpResult> {
-  const res = await fetch(PDP_EVALUATE_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildEvidence(token, resourceId, action)),
-  });
+  let res: Response;
+  try {
+    const evaluateUrl = new URL(PDP_EVALUATE_URL);
+    if (PDP_DEBUG_RESPONSE) evaluateUrl.searchParams.set('debug', 'true');
+    res = await fetch(evaluateUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-PDP-Auth': PDP_SHARED_SECRET,
+      },
+      body: JSON.stringify(buildEvidence(token, resourceId, action, clientIp)),
+      signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `PDP unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      status: 503,
+    };
+  }
   const body = (await res.json()) as Record<string, unknown>;
 
   if (!res.ok || typeof body.decision !== 'string') {
@@ -183,13 +281,16 @@ async function askPdp(
     canonicalInput?: { subject?: Record<string, unknown> };
     trace?: TraceEntry[];
   };
-  const pa = body.pa as { enforcementCommand?: string };
+  const pa = body.pa as { enforcementCommand?: string } | undefined;
   return {
     ok: true,
     decision,
     reason: body.reason as string[],
-    subject: context?.canonicalInput?.subject,
-    enforce: pa?.enforcementCommand,
+    subject:
+      context?.canonicalInput?.subject ??
+      (body.subject as Record<string, unknown> | undefined),
+    enforce:
+      pa?.enforcementCommand ?? (body.enforcementCommand as string | undefined),
     route: body.route as RouteStep[],
     trace: context?.trace,
     status: decision === 'allow' ? 200 : 403,
@@ -204,7 +305,12 @@ app.get('/login', async (request, reply) => {
   const state = randomToken();
   const verifier = randomToken();
   const challenge = b64url(sha256(verifier));
-  const returnTo = (request.query as { returnTo?: string }).returnTo ?? '/';
+  const requestedReturnTo =
+    (request.query as { returnTo?: string }).returnTo ?? '/';
+  const returnTo =
+    requestedReturnTo.startsWith('/') && !requestedReturnTo.startsWith('//')
+      ? requestedReturnTo
+      : '/';
 
   reply.setCookie(
     'pep_flow',
@@ -249,6 +355,7 @@ app.get('/callback', async (request, reply) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form,
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
   });
   const tokens = (await tokenRes.json()) as {
     access_token?: string;
@@ -264,19 +371,20 @@ app.get('/callback', async (request, reply) => {
   }
 
   const claims = decodeJwt(tokens.access_token);
-  const sid = randomToken();
-  sessions.set(sid, {
+  const sessionCookie = sealSession({
     accessToken: tokens.access_token,
     idToken: tokens.id_token,
     username: (claims.preferred_username as string) ?? 'user',
   });
 
   reply.clearCookie('pep_flow', { path: '/' });
-  reply.setCookie('pep_sid', sid, {
+  reply.setCookie('pep_sid', sessionCookie, {
     signed: true,
     httpOnly: true,
     path: '/',
     sameSite: 'lax',
+    secure: REDIRECT_URI.startsWith('https://'),
+    maxAge: 3600,
   });
   return reply.redirect(flow.returnTo || '/');
 });
@@ -287,8 +395,7 @@ app.get('/logout', async (request, reply) => {
   if (raw) {
     const unsigned = request.unsignCookie(raw);
     if (unsigned.valid && unsigned.value) {
-      idToken = sessions.get(unsigned.value)?.idToken;
-      sessions.delete(unsigned.value);
+      idToken = openSession(unsigned.value)?.idToken;
     }
   }
   reply.clearCookie('pep_sid', { path: '/' });
@@ -315,7 +422,7 @@ app.get('/', async (request, reply) => {
     return reply.redirect(`/login?returnTo=${encodeURIComponent(request.url)}`);
   }
 
-  const result = await askPdp(resolved.token, resource, action);
+  const result = await askPdp(resolved.token, resource, action, request.ip);
 
   // Wrap the PDP's internal route with the PEP's own enforcement steps so the
   // page shows the full Zero Trust chain: PEP -> PDP -> PEP enforcement.
@@ -336,6 +443,115 @@ app.get('/', async (request, reply) => {
     .send(page('PEP — Protected Resource', resourceCard(username, resource, action, result)));
 });
 
+// ---- Reverse proxy: /app/* -> upstream web-app (ZTA-protected) --------------
+
+/** Map the HTTP method of a proxied request to a ZTA action. */
+function actionForMethod(method: string): string {
+  if (method === 'DELETE') return 'delete';
+  if (method === 'POST' || method === 'PUT' || method === 'PATCH') return 'write';
+  return 'read';
+}
+
+/**
+ * Enforcement for the real app: every request under /app/* is authorized by
+ * the PDP first; only an explicit `allow` is forwarded to the upstream.
+ * The upstream never sees the raw token — it gets the verified identity as
+ * X-User / X-Role headers instead.
+ */
+async function proxyToApp(request: FastifyRequest, reply: FastifyReply) {
+  const resolved = resolveToken(request);
+  if (!resolved) {
+    if (request.headers.authorization) {
+      return reply.code(401).send({ error: 'missing or invalid Bearer token' });
+    }
+    return reply.redirect(`/login?returnTo=${encodeURIComponent(request.url)}`);
+  }
+
+  const action = actionForMethod(request.method);
+  const result = await askPdp(resolved.token, APP_RESOURCE_ID, action, request.ip);
+  const username =
+    resolved.session?.username ?? (result.subject?.user as string) ?? 'user';
+
+  if (!result.ok) {
+    if (resolved.api || request.method !== 'GET') {
+      return reply.code(result.status).send(result);
+    }
+    return reply
+      .code(result.status)
+      .type('text/html')
+      .send(page('PEP — Xato', `${topbar(username)}${errorCard(result.error ?? 'PDP error')}`));
+  }
+
+  if (result.decision !== 'allow') {
+    result.route = withPepSteps(result, resolved.api, username, APP_RESOURCE_ID, action);
+    // Page-JS fetches (POST/DELETE) and API clients get JSON; browser GET gets HTML.
+    if (resolved.api || request.method !== 'GET') {
+      return reply.code(403).send(result);
+    }
+    return reply
+      .code(403)
+      .type('text/html')
+      .send(page('PEP — Access Denied', proxyDenyCard(username, action, result)));
+  }
+
+  // allow -> forward to the upstream app.
+  const subPath = request.url.slice('/app'.length) || '/';
+  const upstream = new URL(subPath, APP_UPSTREAM_URL);
+  const headers: Record<string, string> = {
+    'x-user': username,
+    'x-role': String(result.subject?.role ?? ''),
+    'x-forwarded-prefix': '/app',
+    'x-forwarded-for': request.ip,
+  };
+  const contentType = request.headers['content-type'];
+  if (contentType) headers['content-type'] = contentType;
+
+  const upstreamRes = await fetch(upstream, {
+    method: request.method,
+    headers,
+    body:
+      request.method === 'GET' || request.method === 'HEAD'
+        ? undefined
+        : request.body
+          ? new Uint8Array(request.body as Buffer)
+          : undefined,
+    redirect: 'manual',
+    signal: AbortSignal.timeout(OUTBOUND_TIMEOUT_MS),
+  });
+
+  reply.code(upstreamRes.status);
+  const respType = upstreamRes.headers.get('content-type');
+  if (respType) reply.header('content-type', respType);
+  const location = upstreamRes.headers.get('location');
+  if (location) reply.header('location', location);
+  return reply.send(Buffer.from(await upstreamRes.arrayBuffer()));
+}
+
+app.get('/app', async (_request, reply) => reply.redirect('/app/'));
+app.route({
+  method: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'],
+  url: '/app/*',
+  handler: proxyToApp,
+});
+
+function proxyDenyCard(username: string, action: string, result: PdpResult): string {
+  const reasons = (result.reason ?? []).map((r) => `<li>${escapeHtml(r)}</li>`).join('');
+  return `
+    ${topbar(username)}
+    <div class="card bad">
+      <span class="badge deny">✘ ACCESS DENIED</span>
+      <div class="meta">
+        <div><b>resource</b> ${APP_RESOURCE_ID}</div>
+        <div><b>action</b> ${action}</div>
+        <div><b>enforce</b> ${result.enforce ?? '-'}</div>
+      </div>
+      <div class="reasons"><b>PDP reason</b><ul>${reasons}</ul></div>
+      <p><a class="login" href="/app/">← my_app ga qaytish</a></p>
+    </div>
+    ${renderRoute(result.route)}
+    ${renderTrace(result.trace)}`;
+}
+
 // ---- HTML -------------------------------------------------------------------
 
 const RESOURCES = ['incident_db', 'case_management', 'audit_log'];
@@ -348,7 +564,8 @@ function nav(resource: string, action: string): string {
       return `<a${active} href="/?resource=${r}&action=${a}">${r}:${a}</a>`;
     }),
   ).join('');
-  return `<div class="nav">${links}</div>`;
+  const appLink = `<a class="applink" href="/app/">🌐 my_app (real app, proxy)</a>`;
+  return `<div class="nav">${appLink}${links}</div>`;
 }
 
 function resourceCard(
@@ -497,6 +714,7 @@ function page(title: string, body: string): string {
     .nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
     .nav a{font-size:12px;color:#cbd5e1;background:#1e293b;padding:5px 9px;border-radius:6px;text-decoration:none;border:1px solid #334155}
     .nav a.active{background:#2563eb;border-color:#2563eb;color:#fff}
+    .nav a.applink{border-color:#16a34a;color:#4ade80}
     .card{background:#1e293b;border-radius:12px;padding:20px;border:1px solid #334155}
     .card.ok{border-color:#16a34a}.card.bad{border-color:#dc2626}
     .badge{display:inline-block;padding:6px 12px;border-radius:8px;font-weight:700;font-size:14px}

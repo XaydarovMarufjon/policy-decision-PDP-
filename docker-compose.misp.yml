@@ -1,0 +1,95 @@
+# Real threat-intel override: replace the risk mock with a live MISP instance.
+#
+# Run the full real stack (base + Keycloak identity + PEP + MISP risk):
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.keycloak.yml \
+#     -f docker-compose.pep.yml \
+#     -f docker-compose.misp.yml up -d --build
+#
+# MISP is heavy and slow to initialize on first boot (DB migrations, minutes).
+# Web UI: http://localhost:8083  (admin@admin.test / admin).
+# Seed a malicious IOC for testing:  ./scripts/misp-seed.sh 203.0.113.66
+#
+# The PDP queries MISP /attributes/restSearch by source IP: a hit sets
+# threat_intel_match=true and derives siem_score from the IOC threat level.
+services:
+  misp-db:
+    image: mariadb:10.11
+    container_name: zta-misp-db
+    environment:
+      MYSQL_USER: "misp"
+      MYSQL_PASSWORD: "misp"
+      MYSQL_ROOT_PASSWORD: "misp"
+      MYSQL_DATABASE: "misp"
+    command: ["--innodb-buffer-pool-size=256M", "--skip-ssl"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+    volumes:
+      - misp-db:/var/lib/mysql
+    restart: unless-stopped
+
+  misp-redis:
+    image: valkey/valkey:7.2
+    container_name: zta-misp-redis
+    environment:
+      ENABLE_REDIS_EMPTY_PASSWORD: "true"
+    restart: unless-stopped
+
+  misp-modules:
+    image: ghcr.io/misp/misp-docker/misp-modules:latest
+    container_name: zta-misp-modules
+    environment:
+      REDIS_BACKEND: "misp-redis"
+    restart: unless-stopped
+
+  misp-core:
+    image: ghcr.io/misp/misp-docker/misp-core:latest
+    container_name: zta-misp
+    environment:
+      BASE_URL: "http://localhost:8083"
+      DISABLE_IPV6: "true"
+      ADMIN_EMAIL: "admin@admin.test"
+      ADMIN_PASSWORD: "admin"
+      ADMIN_KEY: "0123456789abcdef0123456789abcdef01234567"
+      AUTOGEN_ADMIN_KEY: "false"
+      MYSQL_HOST: "misp-db"
+      MYSQL_USER: "misp"
+      MYSQL_PASSWORD: "misp"
+      MYSQL_DATABASE: "misp"
+      MYSQL_TLS: "false"
+      REDIS_HOST: "misp-redis"
+      ENABLE_REDIS_EMPTY_PASSWORD: "true"
+    ports:
+      - "8083:80"
+    depends_on:
+      misp-db:
+        condition: service_healthy
+      misp-redis:
+        condition: service_started
+      misp-modules:
+        condition: service_started
+    volumes:
+      - misp-core-config:/var/www/MISP/app/Config
+      - misp-core-files:/var/www/MISP/app/files
+    restart: unless-stopped
+
+  pdp:
+    environment:
+      RISK_MODE: "misp"
+      # MISP redirects HTTP to its self-signed HTTPS endpoint internally.
+      MISP_URL: "https://misp-core:443"
+      MISP_API_KEY: "0123456789abcdef0123456789abcdef01234567"
+      MISP_VERIFY_TLS: "false"
+    depends_on:
+      - opa
+      - keycloak
+      - misp-core
+
+volumes:
+  misp-db:
+  misp-core-config:
+  misp-core-files:

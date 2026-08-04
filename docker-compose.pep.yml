@@ -29,6 +29,13 @@ services:
       PEP_REDIRECT_URI: "http://localhost:8000/callback"
       PEP_BASE_URL: "http://localhost:8000"
       COOKIE_SECRET: "pep-dev-cookie-secret-change-me"
+      # Must match the PDP's PDP_SHARED_SECRET (sent as X-PDP-Auth on every evaluate).
+      PDP_SHARED_SECRET: "${PDP_SHARED_SECRET:-pdp-dev-shared-secret}"
+      # DEV stack. In production set real secrets and drop this.
+      ALLOW_DEV_DEFAULTS: "${ALLOW_DEV_DEFAULTS:-true}"
+      # Detailed PDP route/trace is only available while dev defaults are on.
+      PDP_DEBUG_RESPONSE: "${PDP_DEBUG_RESPONSE:-true}"
+      PEP_OUTBOUND_TIMEOUT_MS: "${PEP_OUTBOUND_TIMEOUT_MS:-4000}"
     depends_on:
       - pdp
       - keycloak
