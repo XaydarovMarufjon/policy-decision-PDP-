@@ -1,7 +1,17 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  ServiceUnavailableException,
+  UseGuards,
+} from '@nestjs/common';
 import { PdpService } from './pdp.service';
-import { PdpResponse } from './pdp.types';
+import { PdpEnforcementResponse, PdpResponse } from './pdp.types';
+import { allowDevDefaults } from '../common/dev-secret';
 import { AuditLogService, PdpAuditEvent } from './audit/audit-log.service';
+import { PdpAuthGuard } from './security/pdp-auth.guard';
 
 @Controller('pdp')
 export class PdpController {
@@ -15,16 +25,36 @@ export class PdpController {
     return {
       status: 'ok',
       service: 'pdp',
-      opaDecisionUrl: this.pdpService.opaDecisionUrl,
     };
   }
 
+  @Get('health/live')
+  live() {
+    return { status: 'ok', service: 'pdp' };
+  }
+
+  @Get('health/ready')
+  async ready() {
+    if (!(await this.pdpService.ready())) {
+      throw new ServiceUnavailableException('OPA is not ready');
+    }
+    return { status: 'ok', service: 'pdp', dependencies: { opa: 'ok' } };
+  }
+
   @Post('evaluate')
-  evaluate(@Body() body: unknown): Promise<PdpResponse> {
-    return this.pdpService.evaluate(body);
+  @UseGuards(PdpAuthGuard)
+  async evaluate(
+    @Body() body: unknown,
+    @Query('debug') debug?: string,
+  ): Promise<PdpResponse | PdpEnforcementResponse> {
+    const response = await this.pdpService.evaluate(body);
+    return debug === 'true' && allowDevDefaults()
+      ? response
+      : this.pdpService.toEnforcementResponse(response);
   }
 
   @Get('audit')
+  @UseGuards(PdpAuthGuard)
   audit(@Query('limit') limit?: string): {
     path: string;
     count: number;

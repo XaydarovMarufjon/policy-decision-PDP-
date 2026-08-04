@@ -1,0 +1,59 @@
+# Real Keycloak IdP override for the PDP (real-user identity).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.keycloak.yml up -d
+#
+# Keycloak imports the "soc" realm (roles + test users) on first start.
+# Get a real user access token and send it as subject_ref.token (type "jwt"):
+#
+#   ./scripts/kc-token.sh ali.valiyev        # analyst / SOC / mfa=true
+#
+# Admin console: http://localhost:8080  (admin / admin)
+#
+# Issuer is pinned to http://localhost:8080/realms/soc via KC_HOSTNAME so tokens
+# verify the same whether fetched from the host or from inside the network. The
+# PDP fetches JWKS over the internal network at http://keycloak:8080.
+#
+# User data persists in the keycloak-data volume, so users created via the admin
+# UI or Admin API survive container recreation. Note: --import-realm only runs on
+# an EMPTY volume; once seeded, edits to realm-soc.json are NOT re-imported
+# (wipe the volume or import manually to re-apply). The realm file is a one-time
+# seed after that.
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1.4
+    container_name: zta-keycloak
+    command:
+      - "start-dev"
+      - "--import-realm"
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: "admin"
+      KC_BOOTSTRAP_ADMIN_PASSWORD: "admin"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME: "http://localhost:8080"
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HEALTH_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-soc.json:/opt/keycloak/data/import/realm-soc.json:ro
+      - keycloak-data:/opt/keycloak/data
+    restart: unless-stopped
+
+  pdp:
+    environment:
+      IDENTITY_MODE: "oidc"
+      OIDC_ISSUER: "http://localhost:8080/realms/soc"
+      OIDC_JWKS_URL: "http://keycloak:8080/realms/soc/protocol/openid-connect/certs"
+      # The realm's pdp-audience mapper stamps aud=pdp on access tokens; the PDP
+      # requires it. If you have an OLD keycloak-data volume seeded before this
+      # mapper was added, wipe it to re-import:
+      #   docker volume rm policy-decision-pdp-_keycloak-data
+      OIDC_AUDIENCE: "pdp"
+      OIDC_ROLE_PRIORITY: "admin,analyst,auditor,guest"
+      OIDC_CLAIM_MFA: "mfa"
+    depends_on:
+      - opa
+      - keycloak
+
+volumes:
+  keycloak-data:

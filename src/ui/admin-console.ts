@@ -340,6 +340,16 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         font-size: 13px;
       }
 
+      .route-flow.audit-route {
+        min-height: 0;
+        max-height: 340px;
+        margin-top: 8px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
       .route-step {
         position: relative;
         display: grid;
@@ -735,6 +745,8 @@ export const adminConsoleHtml = String.raw`<!doctype html>
     </div>
 
     <script>
+      // Injected server-side (dev only) so the console can call the guarded PDP routes.
+      const PDP_SHARED_SECRET = "__PDP_SHARED_SECRET__";
       const samples = {
         allowEvidence: {
           request_id: "req-allow-001",
@@ -1011,13 +1023,21 @@ export const adminConsoleHtml = String.raw`<!doctype html>
           return;
         }
 
-        routeViewer.innerHTML = route
+        routeViewer.className = "route-flow";
+        routeViewer.innerHTML = routeStepsHtml(route);
+      }
+
+      function routeStepsHtml(route) {
+        return route
           .map(function (step, index) {
             const blocks = [
               routeBlock("Input", step.input),
               routeBlock("Process", step.process),
               routeBlock("Output", step.output)
             ].join("");
+            const payloads = blocks
+              ? '<div class="route-payloads">' + blocks + '</div>'
+              : "";
 
             return [
               '<article class="route-step" style="animation-delay: ' + index * 90 + 'ms">',
@@ -1030,7 +1050,7 @@ export const adminConsoleHtml = String.raw`<!doctype html>
                     '</div>',
                     '<p class="route-description">' + escapeHtml(step.description || "") + '</p>',
                   '</div>',
-                  '<div class="route-payloads">' + blocks + '</div>',
+                  payloads,
                 '</div>',
               '</article>'
             ].join("");
@@ -1069,7 +1089,9 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         auditStatus.className = "chip";
 
         try {
-          const response = await fetch("/pdp/audit?limit=20");
+          const response = await fetch("/pdp/audit?limit=20", {
+            headers: { "X-PDP-Auth": PDP_SHARED_SECRET }
+          });
           const body = await response.json();
 
           if (!response.ok) {
@@ -1122,6 +1144,12 @@ export const adminConsoleHtml = String.raw`<!doctype html>
                   reasonHtml,
                 '</div>',
                 '<details class="audit-details">',
+                  '<summary>Decision route</summary>',
+                  (Array.isArray(entry.route) && entry.route.length
+                    ? '<div class="route-flow audit-route">' + routeStepsHtml(entry.route) + '</div>'
+                    : '<div class="audit-empty">No route recorded for this event.</div>'),
+                '</details>',
+                '<details class="audit-details">',
                   '<summary>View event JSON</summary>',
                   '<pre>' + escapeHtml(pretty(entry)) + '</pre>',
                 '</details>',
@@ -1158,7 +1186,10 @@ export const adminConsoleHtml = String.raw`<!doctype html>
         try {
           const response = await fetch("/pdp/evaluate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "X-PDP-Auth": PDP_SHARED_SECRET
+            },
             body: JSON.stringify(payload)
           });
           const body = await response.json();

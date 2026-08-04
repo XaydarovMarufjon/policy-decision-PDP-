@@ -18,14 +18,16 @@
           "departments": ["SOC"],
           "resources": {
             "incident_db": ["read"],
-            "case_management": ["read", "write"]
+            "case_management": ["read", "write"],
+            "my_app": ["read", "write"]
           }
         },
         "SOC_ANALYST": {
           "departments": ["SOC"],
           "resources": {
             "incident_db": ["read"],
-            "case_management": ["read", "write"]
+            "case_management": ["read", "write"],
+            "my_app": ["read", "write"]
           }
         },
         "SOC_ADMIN": {
@@ -33,14 +35,16 @@
           "resources": {
             "incident_db": ["read", "write", "delete"],
             "case_management": ["read", "write", "delete"],
-            "audit_log": ["read"]
+            "audit_log": ["read"],
+            "my_app": ["read", "write", "delete"]
           }
         },
         "AUDITOR": {
           "departments": ["GRC", "Security"],
           "resources": {
             "audit_log": ["read"],
-            "incident_db": ["read"]
+            "incident_db": ["read"],
+            "my_app": ["read"]
           }
         }
       },
@@ -72,6 +76,17 @@
           "criticality": "high",
           "required_mfa": true,
           "max_risk_score": 39,
+          "device": {
+            "managed": true,
+            "edr_status": "healthy",
+            "patch_level": "ok"
+          }
+        },
+        "my_app": {
+          "type": "web-application",
+          "criticality": "medium",
+          "required_mfa": true,
+          "max_risk_score": 59,
           "device": {
             "managed": true,
             "edr_status": "healthy",
